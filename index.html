@@ -1142,6 +1142,13 @@ function renderFlashSetup() {
   </div>`;
 }
 function initFlash() { renderFlashSetup(); }
+document.addEventListener('keydown', function(e) {
+  const tab=document.getElementById('tab-flash');
+  if(!tab||!tab.classList.contains('active')||!fq.length)return;
+  if(e.key==='ArrowRight'){e.preventDefault();nextFlash();}
+  else if(e.key==='ArrowLeft'){e.preventDefault();prevFlash();}
+  else if((e.key===' '||e.key==='Enter')&&!fr&&document.activeElement?.tagName!=='BUTTON'&&document.activeElement?.tagName!=='INPUT'&&document.activeElement?.tagName!=='SELECT'){e.preventDefault();revealFlash();}
+});
 function setFlashMode(m) {
   flashMode = m;
   ['all','bulk','manual','weak','unmastered','missed'].forEach(id => { const el=document.getElementById('fm-'+id); if(el)el.classList.toggle('active',id===m); });
