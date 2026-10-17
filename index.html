@@ -1105,18 +1105,40 @@ function toggleMaster(id) {
 }
 
 // ===== フラッシュカード =====
-let fq=[], fi=0, fc=0, fm=0, fr=false, flashMode='all', flashMissed=[];
+let fq=[], fi=0, fc=0, fm=0, fr=false, flashMode='all', flashMissed=[], flashDirection='term', flashOrder='shuffle', flashLimit='all';
 function renderFlashSetup() {
   document.getElementById('flash-area').innerHTML = `<div class="flash-wrap">
-    <div class="flash-mode-sel">
-      <button class="fm-btn active" id="fm-all" onclick="setFlashMode('all')">すべて</button>
-      <button class="fm-btn" id="fm-bulk" onclick="setFlashMode('bulk')">一括</button>
-      <button class="fm-btn" id="fm-manual" onclick="setFlashMode('manual')">自分で追加</button>
-      <button class="fm-btn" id="fm-weak" onclick="setFlashMode('weak')">😰 苦手</button>
-      <button class="fm-btn" id="fm-missed" onclick="setFlashMode('missed')">❌ ミス履歴</button>
-      <button class="fm-btn" id="fm-unmastered" onclick="setFlashMode('unmastered')">未習得</button>
+    <div style="width:100%;max-width:620px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);">
+      <h3 style="margin-bottom:8px;">🃏 フラッシュカード</h3>
+      <p style="font-size:13px;color:var(--text3);line-height:1.6;margin-bottom:12px;">カードをタップして答えを確認。知っている／まだ覚えていないを記録して、苦手な単語を繰り返し練習できます。</p>
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">学習するカード</div>
+      <div class="flash-mode-sel">
+        <button class="fm-btn active" id="fm-all" onclick="setFlashMode('all')">すべて</button>
+        <button class="fm-btn" id="fm-bulk" onclick="setFlashMode('bulk')">一括</button>
+        <button class="fm-btn" id="fm-manual" onclick="setFlashMode('manual')">自分で追加</button>
+        <button class="fm-btn" id="fm-weak" onclick="setFlashMode('weak')">😰 苦手</button>
+        <button class="fm-btn" id="fm-missed" onclick="setFlashMode('missed')">❌ ミス履歴</button>
+        <button class="fm-btn" id="fm-unmastered" onclick="setFlashMode('unmastered')">未習得</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0;">
+        <label style="font-size:12px;color:var(--text2);">カードの順番
+          <select id="flash-order" onchange="flashOrder=this.value" style="display:block;width:100%;margin-top:5px;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+            <option value="shuffle" selected>シャッフル</option><option value="original">登録順</option>
+          </select>
+        </label>
+        <label style="font-size:12px;color:var(--text2);">カードの向き
+          <select id="flash-direction" onchange="flashDirection=this.value" style="display:block;width:100%;margin-top:5px;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+            <option value="term" selected>単語 → 意味</option><option value="definition">意味 → 単語</option>
+          </select>
+        </label>
+        <label style="font-size:12px;color:var(--text2);">出題枚数
+          <select id="flash-limit" onchange="flashLimit=this.value" style="display:block;width:100%;margin-top:5px;padding:9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+            <option value="10">10枚</option><option value="20">20枚</option><option value="50">50枚</option><option value="all" selected>すべて</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-primary" style="padding:12px 32px;font-size:15px;width:100%;" onclick="startFlash()">▶ 学習を開始</button>
     </div>
-    <button class="btn btn-primary" style="padding:12px 32px;font-size:15px;" onclick="startFlash()">▶ スタート</button>
   </div>`;
 }
 function initFlash() { renderFlashSetup(); }
@@ -1124,48 +1146,89 @@ function setFlashMode(m) {
   flashMode = m;
   ['all','bulk','manual','weak','unmastered','missed'].forEach(id => { const el=document.getElementById('fm-'+id); if(el)el.classList.toggle('active',id===m); });
 }
+function getFlashPool() {
+  if (flashMode==='all') return [...words];
+  if (flashMode==='bulk') return words.filter(w=>w.source==='bulk');
+  if (flashMode==='manual') return words.filter(w=>w.source!=='bulk');
+  if (flashMode==='weak') return words.filter(w=>{const r=(w.correct||0)+(w.miss||0);return r>=3&&(w.miss||0)/r>=0.5;});
+  if (flashMode==='unmastered') return words.filter(w=>!w.mastered);
+  if (flashMode==='missed') return words.filter(w=>w.missedOnce);
+  return [...words];
+}
 function startFlash(retryMissed=false) {
-  let pool;
-  if (retryMissed) { pool = flashMissed; }
-  else if (flashMode==='all') pool=words;
-  else if (flashMode==='bulk') pool=words.filter(w=>w.source==='bulk');
-  else if (flashMode==='manual') pool=words.filter(w=>w.source!=='bulk');
-  else if (flashMode==='weak') pool=words.filter(w=>{const r=w.correct+w.miss;return r>=3&&w.miss/r>=0.5;});
-  else if (flashMode==='unmastered') pool=words.filter(w=>!w.mastered);
-  else if (flashMode==='missed') pool=words.filter(w=>w.missedOnce);
+  let pool = retryMissed ? [...flashMissed] : getFlashPool();
   if (!pool||pool.length===0) { alert('その種類の単語がないよ！'); return; }
-  flashMissed=[]; fq=[...pool].sort(()=>Math.random()-0.5); fi=0; fc=0; fm=0; fr=false; renderFlash();
+  flashMissed=[];
+  if (!retryMissed) {
+    flashOrder=document.getElementById('flash-order')?.value||flashOrder;
+    flashDirection=document.getElementById('flash-direction')?.value||flashDirection;
+    flashLimit=document.getElementById('flash-limit')?.value||flashLimit;
+  }
+  if (flashOrder==='shuffle') pool.sort(()=>Math.random()-0.5);
+  const limit=flashLimit==='all'?pool.length:Math.max(1,parseInt(flashLimit,10)||pool.length);
+  fq=pool.slice(0,limit); fi=0; fc=0; fm=0; fr=false; renderFlash();
+}
+function flashFront(w) {
+  const isJA=w.lang==='ja';
+  if (flashDirection==='definition') return isJA?(w.translated_en||w.meaning_en||w.word):(w.meaning_ja||w.meaning_en||w.word);
+  return w.word;
+}
+function flashBack(w) {
+  const isJA=w.lang==='ja';
+  if (flashDirection==='definition') return w.word;
+  return isJA?(w.translated_en||w.meaning_en||'—'):(w.meaning_ja||w.meaning_en||'—');
 }
 function renderFlash() {
-  const el = document.getElementById('flash-area');
-  if (fi >= fq.length) {
-    const pct = Math.round(fc/fq.length*100);
-    const retryBtn = flashMissed.length > 0 ? `<button class="btn btn-ng" onclick="startFlash(true)">✗ ミス${flashMissed.length}語を再挑戦</button>` : '';
-    el.innerHTML = `<div class="result-box"><div class="result-score">${pct}%</div><div class="result-sub">${fc} / ${fq.length} 正解</div><div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-primary" onclick="startFlash()">もう一度</button>${retryBtn}<button class="btn" onclick="renderFlashSetup()">設定に戻る</button></div></div>`;
+  const el=document.getElementById('flash-area');
+  if (fi>=fq.length) {
+    const total=fc+fm, pct=Math.round(fc/(total||1)*100);
+    const retryBtn=flashMissed.length>0?`<button class="btn btn-ng" onclick="startFlash(true)">✗ ミスした${flashMissed.length}語を再挑戦</button>`:'';
+    el.innerHTML=`<div class="result-box"><div class="result-score">${pct}%</div><div class="result-sub">${fc} / ${total} 正解 · ${fq.length}枚学習</div><div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-primary" onclick="startFlash()">もう一度</button>${retryBtn}<button class="btn" onclick="renderFlashSetup()">設定に戻る</button></div></div>`;
     return;
   }
-  const w = fq[fi]; const isJA = w.lang==='ja';
-  el.innerHTML = `<div class="flash-wrap"><div class="flash-stats"><div>正解 <b>${fc}</b></div><div>ミス <b>${fm}</b></div><div>${fi+1}/${fq.length}</div></div>
-    <div class="fcard" id="fcard" onclick="revealFlash()">
-      <div style="display:flex;align-items:center;gap:8px;justify-content:center;"><div class="fc-word">${escHtml(w.word)}</div><button class="speak-btn" style="font-size:20px;" onclick="event.stopPropagation();speak('${escAttr(w.word)}')">🔊</button></div>
-      ${w.pronunciation?`<div class="fc-sub">${escHtml(w.pronunciation)}</div>`:''}
+  const w=fq[fi], front=flashFront(w);
+  const pct=Math.round(fi/fq.length*100);
+  const meaning=flashBack(w);
+  el.innerHTML=`<div class="flash-wrap">
+    <div style="width:100%;max-width:560px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text3);margin-bottom:7px;"><span>カード ${fi+1} / ${fq.length}</span><span>✓ ${fc} 正解　✗ ${fm} もう一度</span></div>
+      <div style="height:6px;background:var(--border);border-radius:8px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent);transition:width .2s;"></div></div>
+    </div>
+    <div class="fcard" id="fcard" onclick="revealFlash()" style="min-height:250px;max-width:560px;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:14px;">${flashDirection==='definition'?'意味':'単語'}</div>
+      <div class="fc-word" style="font-size:${String(front).length>24?'22':'32'}px;">${escHtml(front)}</div>
+      ${flashDirection==='term'&&w.pronunciation?`<div class="fc-sub">${escHtml(w.pronunciation)}</div>`:''}
       <div id="fc-reveal"></div>
-      <div class="fc-tap" id="fc-tap">タップして${isJA?'英語':'意味'}を確認</div>
+      <div class="fc-tap" id="fc-tap">タップして答えを表示</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn" onclick="speak('${escAttr(front)}')">🔊 読み上げ</button>
+      <button class="btn" onclick="prevFlash()" ${fi===0?'disabled':''}>← 前へ</button>
+      <button class="btn" onclick="nextFlash()">スキップ →</button>
+      <button class="btn" onclick="renderFlashSetup()">終了</button>
     </div>
     <div id="fc-btns" style="display:none" class="flash-btns">
-      <button class="btn btn-ng" style="padding:12px 28px;font-size:14px;" onclick="answerFlash(false)">✗ ミス</button>
-      <button class="btn btn-ok" style="padding:12px 28px;font-size:14px;" onclick="answerFlash(true)">✓ 正解</button>
-    </div></div>`;
+      <button class="btn btn-ng" style="padding:12px 22px;font-size:14px;" onclick="answerFlash(false)">↻ もう一度</button>
+      <button class="btn btn-ok" style="padding:12px 22px;font-size:14px;" onclick="answerFlash(true)">✓ 覚えた</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);">ヒント：カードをタップして答えを表示。← → キーでも移動できます。</div>
+  </div>`;
 }
 function revealFlash() {
-  if (fr) return; fr=true; const w=fq[fi]; const isJA=w.lang==='ja';
+  if(fr)return;
+  fr=true;
+  const w=fq[fi], answer=flashBack(w);
   document.getElementById('fc-tap').style.display='none';
-  document.getElementById('fc-reveal').innerHTML = `<div class="fc-ans"><div class="fc-main">${escHtml(isJA?(w.translated_en||''):(w.meaning_ja||''))}</div>${w.meaning_en?`<div class="fc-def">${escHtml(w.meaning_en)}</div>`:''}${w.example?`<div class="fc-ex">${escHtml(w.example)}${w.example_ja?'<br><span style="font-style:normal;">→ '+escHtml(w.example_ja)+'</span>':''}</div>`:''}</div>`;
-  document.getElementById('fc-btns').style.display='flex'; document.getElementById('fcard').style.cursor='default';
+  document.getElementById('fc-reveal').innerHTML=`<div class="fc-ans"><div class="fc-main">${escHtml(answer)}</div>${w.meaning_en&&flashDirection!=='definition'?`<div class="fc-def">${escHtml(w.meaning_en)}</div>`:''}${w.example?`<div class="fc-ex">${escHtml(w.example)}${w.example_ja?'<br><span style="font-style:normal;">→ '+escHtml(w.example_ja)+'</span>':''}</div>`:''}</div>`;
+  document.getElementById('fc-btns').style.display='flex';
+  document.getElementById('fcard').style.cursor='default';
 }
+function prevFlash(){if(fi>0){fi--;fr=false;renderFlash();}}
+function nextFlash(){if(fi<fq.length){fi++;fr=false;renderFlash();}}
 function answerFlash(ok) {
-  const w = fq[fi];
-  if(ok){w.correct++;fc++;}else{w.miss++;fm++;w.missedOnce=true;if(!flashMissed.find(x=>x.word===w.word))flashMissed.push(w);}
+  const w=fq[fi]; if(!w)return;
+  if(ok){w.correct=(w.correct||0)+1;fc++;w.mastered=true;}
+  else{w.miss=(w.miss||0)+1;fm++;w.missedOnce=true;w.mastered=false;if(!flashMissed.find(x=>x.id===w.id))flashMissed.push(w);}
   saveToStorage(); recordStudy(); fi++; fr=false; renderFlash();
 }
 
