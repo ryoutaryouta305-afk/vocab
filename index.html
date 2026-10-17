@@ -272,6 +272,15 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
   <div class="sync-status syncing" id="sync-status"><div class="sync-dot"></div><span id="sync-msg">読み込み中...</span></div>
   <span id="hd-count"></span>
 </header>
+<div id="auth-panel" style="background:#fff;padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+  <strong style="font-size:13px;">☁️ クラウド同期</strong>
+  <input id="auth-email" type="email" autocomplete="email" placeholder="メールアドレス" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;max-width:240px;">
+  <input id="auth-password" type="password" autocomplete="current-password" placeholder="パスワード（8文字以上）" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;max-width:220px;">
+  <button class="btn btn-primary" id="auth-signin" onclick="signIn()">ログイン</button>
+  <button class="btn" id="auth-signup" onclick="signUp()">アカウント作成</button>
+  <button class="btn" id="auth-signout" onclick="signOut()" style="display:none;">ログアウト</button>
+  <span id="auth-msg" role="status" style="font-size:12px;color:var(--text2);">同期するにはログインしてください。端末内の単語はログイン後に同期できます。</span>
+</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('add')">🔍 検索</button>
   <button class="tab" onclick="switchTab('bulk')">📋 一括</button>
@@ -390,13 +399,90 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
 // ===== SUPABASE =====
 const SUPABASE_URL = 'https://uehbuepeloebgkkffaaa.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1ZWhidWVwZWxvZWJna2tmZmFhYSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgzODA4MjEwLCJleHAiOjIwOTkzODQyMTB9.WtfoCbzmkIYxih4Ny7TZ0pHbLngB0Wej_NI7sb8AUk0';
-const SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
-// 書き込み系(POST/PATCH/DELETE)だけに付ける合言葉。Supabase側のRLSポリシーでこの値と
-// 一致するリクエストだけ書き込みを許可するようにしてある（読み取りは誰でも可のまま）。
-// これも結局クライアントコードに書いてある以上、本気で解析されれば見えるが、
-// 「誰でも触れる公開REST API」から「このアプリを経由しないと事実上書けない」状態にはなる。
-const APP_SECRET = 'JpDBUuLBsBH-0bOU_n36xj3Hqe1OJ5a2';
-const SB_WRITE_HEADERS = { ...SB_HEADERS, 'x-app-secret': APP_SECRET };
+let authSession = null;
+let SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
+let SB_WRITE_HEADERS = { ...SB_HEADERS };
+function updateAuthHeaders() {
+  const token = authSession && authSession.access_token ? authSession.access_token : SUPABASE_KEY;
+  SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + token };
+  SB_WRITE_HEADERS = { ...SB_HEADERS };
+}
+function setAuthMessage(message, isError = false) {
+  const el = document.getElementById('auth-msg');
+  if (el) { el.textContent = message; el.style.color = isError ? 'var(--ng)' : 'var(--text2)'; }
+}
+function updateAuthUI() {
+  const loggedIn = !!(authSession && authSession.user && authSession.access_token);
+  ['auth-signin','auth-signup','auth-email','auth-password'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = loggedIn ? 'none' : ''; });
+  const out = document.getElementById('auth-signout');
+  if (out) out.style.display = loggedIn ? '' : 'none';
+  if (loggedIn) setAuthMessage('ログイン中: ' + (authSession.user.email || 'アカウント') + '（クラウド同期有効）');
+}
+function saveAuthSession(session) {
+  if (!session || !session.access_token || !session.user) {
+    authSession = null;
+    try { localStorage.removeItem('vocab_auth_session'); } catch(e) {}
+  } else {
+    authSession = { ...session, expires_at: session.expires_at || Math.floor(Date.now()/1000) + (session.expires_in || 3600) };
+    try { localStorage.setItem('vocab_auth_session', JSON.stringify(authSession)); } catch(e) {}
+  }
+  updateAuthHeaders();
+  updateAuthUI();
+}
+async function ensureFreshSession() {
+  if (!authSession || !authSession.refresh_token) return false;
+  if (authSession.expires_at && authSession.expires_at > Math.floor(Date.now()/1000) + 60) return true;
+  try {
+    const res = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', { method:'POST', headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY}, body:JSON.stringify({refresh_token:authSession.refresh_token}) });
+    if (!res.ok) throw new Error('セッションを更新できませんでした。もう一度ログインしてください。');
+    saveAuthSession(await res.json());
+    return true;
+  } catch(e) { saveAuthSession(null); setAuthMessage(e.message || 'ログインし直してください。', true); return false; }
+}
+async function signUp() {
+  const email=(document.getElementById('auth-email').value||'').trim(), password=document.getElementById('auth-password').value||'';
+  if (!email || password.length<8) { setAuthMessage('メールアドレスと8文字以上のパスワードを入力してください。',true); return; }
+  setAuthMessage('アカウントを作成中...');
+  try {
+    const res=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify({email,password})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.msg||data.message||data.error_description||'アカウントを作成できませんでした。');
+    if(data.access_token&&data.user){saveAuthSession(data);await loadFromStorage();}
+    else setAuthMessage('確認メールを送信しました。メール内のリンクで認証してからログインしてください。');
+  } catch(e){setAuthMessage(e.message||'アカウント作成に失敗しました。',true);}
+}
+async function signIn() {
+  const email=(document.getElementById('auth-email').value||'').trim(), password=document.getElementById('auth-password').value||'';
+  if(!email||!password){setAuthMessage('メールアドレスとパスワードを入力してください。',true);return;}
+  setAuthMessage('ログイン中...');
+  try{
+    const res=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify({email,password})});
+    const data=await res.json();
+    if(!res.ok||!data.access_token||!data.user)throw new Error(data.msg||data.message||data.error_description||'ログインできませんでした。');
+    saveAuthSession(data);await loadFromStorage();
+  }catch(e){setAuthMessage(e.message||'ログインに失敗しました。',true);}
+}
+async function signOut() {
+  if(!confirm('ログアウトしますか？未同期の変更がある場合は、先に同期できることを確認してください。')) return;
+  if(authSession && words.length){
+    clearTimeout(syncTimer);syncTimer=null;
+    await syncNow();
+    if(document.getElementById('sync-status').classList.contains('error')){
+      alert('同期に失敗したためログアウトを中止しました。ネット接続を確認して再試行してください。');
+      return;
+    }
+  }
+  if(authSession){await ensureFreshSession();try{await fetch(SUPABASE_URL+'/auth/v1/logout',{method:'POST',headers:SB_HEADERS});}catch(e){}}
+  saveAuthSession(null);words=[];
+  try{localStorage.removeItem('vocab_v2');}catch(e){}
+  updateHeader();renderList();setSyncStatus('offline','ログアウト中');setAuthMessage('ログアウトしました。');
+}
+async function initAuth() {
+  try{const s=localStorage.getItem('vocab_auth_session');if(s)authSession=JSON.parse(s);}catch(e){authSession=null;}
+  updateAuthHeaders();
+  if(authSession&&!(await ensureFreshSession()))authSession=null;
+  updateAuthHeaders();updateAuthUI();
+}
 
 let words = [], syncTimer = null, currentLang = 'en', listFilter = 'all', bulkAbort = false, bulkDetailAbort = false;
 let selectMode = false, selectedIds = new Set();
@@ -507,23 +593,32 @@ function updateHeader() {
   document.getElementById('hd-count').textContent = words.length > 0 ? words.length + '語' : '';
 }
 async function loadFromStorage() {
-  setSyncStatus('syncing', '同期中...');
-  try {
-    let allRows = [], offset = 0, pageSize = 1000;
-    while (true) {
-      const res = await fetch(SUPABASE_URL + '/rest/v1/words?select=*&order=id.asc&limit=' + pageSize + '&offset=' + offset, { headers: SB_HEADERS });
-      if (!res.ok) throw new Error('単語の読み込みに失敗しました (HTTP ' + res.status + ')');
-      const rows = await res.json();
-      allRows = allRows.concat(rows);
-      if (rows.length < pageSize) break;
-      offset += pageSize;
+  if(!authSession||!authSession.user||!(await ensureFreshSession())){
+    try{const s=localStorage.getItem('vocab_v2');if(s)words=JSON.parse(s);}catch(e){}
+    updateHeader();setSyncStatus('offline','ログインするとクラウド同期');renderList();return;
+  }
+  setSyncStatus('syncing','同期中...');
+  try{
+    const localWords=(()=>{try{return JSON.parse(localStorage.getItem('vocab_v2')||'[]');}catch(e){return [];}})();
+    let allRows=[],offset=0,pageSize=1000;
+    while(true){
+      const url=SUPABASE_URL+'/rest/v1/words?select=*&user_id=eq.'+encodeURIComponent(authSession.user.id)+'&order=id.asc&limit='+pageSize+'&offset='+offset;
+      const res=await fetch(url,{headers:SB_HEADERS});
+      if(!res.ok)throw new Error('単語の読み込みに失敗しました (HTTP '+res.status+')');
+      const rows=await res.json();allRows=allRows.concat(rows);
+      if(rows.length<pageSize)break;offset+=pageSize;
     }
-    words = allRows.map(r => JSON.parse(r.data));
+    const remoteWords=allRows.map(r=>JSON.parse(r.data)),merged=new Map();
+    for(const w of localWords)if(w&&w.word)merged.set((w.lang||'en')+'\u0000'+w.word,w);
+    for(const w of remoteWords)if(w&&w.word){const k=(w.lang||'en')+'\u0000'+w.word;if(!merged.has(k))merged.set(k,w);}
+    words=[...merged.values()];
+    try{localStorage.setItem('vocab_v2',JSON.stringify(words));}catch(e){}
+    updateHeader();setSyncStatus('synced','同期済み ✓');
+    if(words.length>remoteWords.length){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,250);}
+  }catch(e){
+    setSyncStatus('error','同期エラー: '+(e&&e.message?e.message:'接続を確認してください'));
+    try{const s=localStorage.getItem('vocab_v2');if(s)words=JSON.parse(s);}catch(e2){}
     updateHeader();
-    setSyncStatus('synced', '同期済み ✓');
-  } catch (e) {
-    try { const s = localStorage.getItem('vocab_v2'); if (s) words = JSON.parse(s); } catch(e2) {}
-    setSyncStatus('offline', 'オフライン');
   }
   renderList();
 }
@@ -544,10 +639,11 @@ async function syncNow() {
   setSyncStatus('syncing', '同期中...');
   try {
     if (words.length > 0) {
-      const rows = words.map(w => ({ word: w.word||'', lang: w.lang||'en', meaning: w.meaning_ja||w.meaning||'', data: JSON.stringify(w) }));
+      if(!authSession||!authSession.user||!(await ensureFreshSession())){setSyncStatus('offline','ログインするとクラウド同期');return;}
+      const rows = words.map(w => ({ user_id:authSession.user.id, word:w.word||'', lang:w.lang||'en', meaning:w.meaning_ja||w.meaning||'', data:JSON.stringify(w) }));
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
-        const res = await fetch(SUPABASE_URL + '/rest/v1/words?on_conflict=word,lang', {
+        const res = await fetch(SUPABASE_URL + '/rest/v1/words?on_conflict=user_id,word,lang', {
           method: 'POST',
           headers: { ...SB_WRITE_HEADERS, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(chunk)
@@ -583,7 +679,8 @@ window.addEventListener('pagehide', flushPendingSync);
 
 // 明示的に削除された単語だけをピンポイントでサーバーから消す（1件ずつのDELETEなので確実で事故りにくい）
 async function deleteOneFromServer(it, retriesLeft) {
-  const q = 'word=eq.' + encodeURIComponent(it.word || '') + '&lang=eq.' + encodeURIComponent(it.lang || 'en');
+  if(!authSession||!authSession.user||!(await ensureFreshSession())){setSyncStatus('offline','ログインすると削除を同期できます');return;}
+  const q='user_id=eq.'+encodeURIComponent(authSession.user.id)+'&word=eq.'+encodeURIComponent(it.word||'')+'&lang=eq.'+encodeURIComponent(it.lang||'en');
   try {
     const res = await fetch(SUPABASE_URL + '/rest/v1/words?' + q, { method: 'DELETE', headers: SB_WRITE_HEADERS });
     if (!res.ok) throw new Error('delete failed: ' + res.status);
@@ -601,27 +698,6 @@ async function deleteWordsFromServer(items) {
   if (!items || items.length === 0) return;
   await Promise.all(items.map(it => deleteOneFromServer(it, 2)));
 }
-// タブを閉じる／バックグラウンドに回る直前に、デバウンス待ちの同期があれば即座に実行する。
-// これが無いと、編集後2秒以内にアプリを閉じた場合に変更がサーバーに届かないまま消えてしまう。
-function flushPendingSync() {
-  if (syncTimer) {
-    clearTimeout(syncTimer);
-    syncTimer = null;
-    try {
-      const rows = words.map(w => ({ word: w.word||'', lang: w.lang||'en', meaning: w.meaning_ja||w.meaning||'', data: JSON.stringify(w) }));
-      if (rows.length > 0 && navigator.sendBeacon) {
-        // sendBeaconは終了処理中でも送信を保証してくれるが、ヘッダーを自由に付けられないため、
-        // PostgRESTがクエリ文字列経由のapikeyも受け付ける点を利用する。
-        const url = SUPABASE_URL + '/rest/v1/words?on_conflict=word,lang&apikey=' + encodeURIComponent(SUPABASE_KEY);
-        const blob = new Blob([JSON.stringify(rows)], { type: 'application/json' });
-        navigator.sendBeacon(url, blob);
-      }
-    } catch (e) {}
-  }
-}
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSync(); });
-window.addEventListener('pagehide', flushPendingSync);
-
 // ===== 学習履歴 =====
 // 実際に問題に答えた時だけ呼ぶ（ページを開いただけではストリークを増やさない）
 function recordStudy() {
@@ -1549,7 +1625,9 @@ async function clearAllWords(){
   // saveToStorage()はもう「upsertのみ」なので全消しはしない。ここでは明示的な全削除操作なので直接サーバーに全削除を投げる。
   setSyncStatus('syncing', '同期中...');
   try {
-    await fetch(SUPABASE_URL + '/rest/v1/words?id=gte.0', { method: 'DELETE', headers: SB_WRITE_HEADERS });
+    if(!authSession||!authSession.user||!(await ensureFreshSession()))throw new Error('ログインが必要です');
+    const res=await fetch(SUPABASE_URL+'/rest/v1/words?user_id=eq.'+encodeURIComponent(authSession.user.id),{method:'DELETE',headers:SB_WRITE_HEADERS});
+    if(!res.ok)throw new Error('HTTP '+res.status);
     setSyncStatus('synced', '同期済み ✓');
   } catch (e) { setSyncStatus('error', '同期エラー'); }
   renderList(); updateHeader();
@@ -1557,7 +1635,7 @@ async function clearAllWords(){
 }
 
 // ===== 起動 =====
-loadFromStorage();
+initAuth().then(()=>loadFromStorage()).catch(()=>loadFromStorage());
 // PWA: アプリ本体（このHTML）をキャッシュしてオフラインでも開けるようにする。
 // 単語データそのもの（Supabase等）はSWでは扱わず、既存のlocalStorageフォールバックに任せる。
 if ('serviceWorker' in navigator) {
