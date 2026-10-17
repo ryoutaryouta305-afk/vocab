@@ -5,6 +5,9 @@ alter table public.words
 
 alter table public.words alter column user_id set not null;
 
+-- The previous global unique key would prevent two accounts from saving the same word.
+alter table public.words drop constraint if exists words_word_lang_key;
+
 alter table public.words
   add constraint words_user_word_lang_key unique (user_id, word, lang);
 
