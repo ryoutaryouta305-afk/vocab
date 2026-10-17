@@ -388,8 +388,8 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
 
 <script>
 // ===== SUPABASE =====
-const SUPABASE_URL = 'https://kjmavlrvhmddesyypniw.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqbWF2bHJ2aG1kZGVzeXlwbml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDgxODgsImV4cCI6MjA5NzE4NDE4OH0.jiEMcvzBSK8OLyMjb5TwXcaNUlX2Ri1MnTauI_tJhhY';
+const SUPABASE_URL = 'https://uehbuepeloebgkkffaaa.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1ZWhidWVwZWxvZWJna2tmZmFhYSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgzODA4MjEwLCJleHAiOjIwOTkzODQyMTB9.WtfoCbzmkIYxih4Ny7TZ0pHbLngB0Wej_NI7sb8AUk0';
 const SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
 // 書き込み系(POST/PATCH/DELETE)だけに付ける合言葉。Supabase側のRLSポリシーでこの値と
 // 一致するリクエストだけ書き込みを許可するようにしてある（読み取りは誰でも可のまま）。
@@ -512,7 +512,7 @@ async function loadFromStorage() {
     let allRows = [], offset = 0, pageSize = 1000;
     while (true) {
       const res = await fetch(SUPABASE_URL + '/rest/v1/words?select=*&order=id.asc&limit=' + pageSize + '&offset=' + offset, { headers: SB_HEADERS });
-      if (!res.ok) throw new Error('fetch failed');
+      if (!res.ok) throw new Error('単語の読み込みに失敗しました (HTTP ' + res.status + ')');
       const rows = await res.json();
       allRows = allRows.concat(rows);
       if (rows.length < pageSize) break;
@@ -556,7 +556,7 @@ async function syncNow() {
       }
     }
     setSyncStatus('synced', '同期済み ✓');
-  } catch (e) { setSyncStatus('error', '同期エラー'); }
+  } catch (e) { setSyncStatus('error', '同期エラー: ' + (e && e.message ? e.message : '接続を確認してください')); }
   finally { isSyncing = false; }
 }
 async function saveToStorage() {
