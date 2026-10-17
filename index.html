@@ -463,10 +463,19 @@ async function signIn() {
   }catch(e){setAuthMessage(e.message||'ログインに失敗しました。',true);}
 }
 async function signOut() {
+  if(!confirm('ログアウトしますか？未同期の変更がある場合は、先に同期できることを確認してください。')) return;
+  if(authSession && words.length){
+    clearTimeout(syncTimer);syncTimer=null;
+    await syncNow();
+    if(document.getElementById('sync-status').classList.contains('error')){
+      alert('同期に失敗したためログアウトを中止しました。ネット接続を確認して再試行してください。');
+      return;
+    }
+  }
   if(authSession){await ensureFreshSession();try{await fetch(SUPABASE_URL+'/auth/v1/logout',{method:'POST',headers:SB_HEADERS});}catch(e){}}
   saveAuthSession(null);words=[];
   try{localStorage.removeItem('vocab_v2');}catch(e){}
-  updateHeader();renderList();setSyncStatus('offline','ログアウト中');setAuthMessage('ログアウトしました。端末内の単語データを消去しました。');
+  updateHeader();renderList();setSyncStatus('offline','ログアウト中');setAuthMessage('ログアウトしました。');
 }
 async function initAuth() {
   try{const s=localStorage.getItem('vocab_auth_session');if(s)authSession=JSON.parse(s);}catch(e){authSession=null;}
@@ -600,8 +609,8 @@ async function loadFromStorage() {
       if(rows.length<pageSize)break;offset+=pageSize;
     }
     const remoteWords=allRows.map(r=>JSON.parse(r.data)),merged=new Map();
-    for(const w of remoteWords)if(w&&w.word)merged.set((w.lang||'en')+'\u0000'+w.word,w);
-    for(const w of localWords)if(w&&w.word){const k=(w.lang||'en')+'\u0000'+w.word;if(!merged.has(k))merged.set(k,w);}
+    for(const w of localWords)if(w&&w.word)merged.set((w.lang||'en')+'\u0000'+w.word,w);
+    for(const w of remoteWords)if(w&&w.word){const k=(w.lang||'en')+'\u0000'+w.word;if(!merged.has(k))merged.set(k,w);}
     words=[...merged.values()];
     try{localStorage.setItem('vocab_v2',JSON.stringify(words));}catch(e){}
     updateHeader();setSyncStatus('synced','同期済み ✓');
@@ -1617,7 +1626,8 @@ async function clearAllWords(){
   setSyncStatus('syncing', '同期中...');
   try {
     if(!authSession||!authSession.user||!(await ensureFreshSession()))throw new Error('ログインが必要です');
-    await fetch(SUPABASE_URL+'/rest/v1/words?user_id=eq.'+encodeURIComponent(authSession.user.id),{method:'DELETE',headers:SB_WRITE_HEADERS});
+    const res=await fetch(SUPABASE_URL+'/rest/v1/words?user_id=eq.'+encodeURIComponent(authSession.user.id),{method:'DELETE',headers:SB_WRITE_HEADERS});
+    if(!res.ok)throw new Error('HTTP '+res.status);
     setSyncStatus('synced', '同期済み ✓');
   } catch (e) { setSyncStatus('error', '同期エラー'); }
   renderList(); updateHeader();
