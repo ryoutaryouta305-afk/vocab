@@ -269,18 +269,9 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
 <body>
 <header>
   <h1>📖 単語帳</h1>
-  <div class="sync-status syncing" id="sync-status"><div class="sync-dot"></div><span id="sync-msg">読み込み中...</span></div>
+  <div class="sync-status synced" id="sync-status"><div class="sync-dot"></div><span id="sync-msg">端末内に保存</span></div>
   <span id="hd-count"></span>
 </header>
-<div id="auth-panel" style="background:#fff;padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-  <strong style="font-size:13px;">☁️ クラウド同期</strong>
-  <input id="auth-email" type="email" autocomplete="email" placeholder="メールアドレス" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;max-width:240px;">
-  <input id="auth-password" type="password" autocomplete="current-password" placeholder="パスワード（8文字以上）" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;max-width:220px;">
-  <button class="btn btn-primary" id="auth-signin" onclick="signIn()">ログイン</button>
-  <button class="btn" id="auth-signup" onclick="signUp()">アカウント作成</button>
-  <button class="btn" id="auth-signout" onclick="signOut()" style="display:none;">ログアウト</button>
-  <span id="auth-msg" role="status" style="font-size:12px;color:var(--text2);">同期するにはログインしてください。端末内の単語はログイン後に同期できます。</span>
-</div>
 <div class="tabs">
   <button class="tab active" onclick="switchTab('add')">🔍 検索</button>
   <button class="tab" onclick="switchTab('bulk')">📋 一括</button>
@@ -371,7 +362,7 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
 <div class="section" id="tab-tools">
   <div class="storage-info">
     💾 <b>クラウド同期について</b><br>
-    単語データはSupabaseに保存されます。ログインしていれば、iPad・iPhone・PCどのデバイスからでも同じ単語帳にアクセスできます。
+    単語データはこのブラウザの端末内に保存されます。ログイン不要で使えます。同じ端末・同じブラウザで開いてください。ブラウザのデータを消去すると単語が消えることがあるため、定期的にエクスポートしてください。
   </div>
   <div class="tools-box">
     <h3>📤 エクスポート / バックアップ</h3>
@@ -396,94 +387,7 @@ header h1{font-size:17px;font-weight:700;color:#fff;letter-spacing:0.02em;}
 </div>
 
 <script>
-// ===== SUPABASE =====
-const SUPABASE_URL = 'https://uehbuepeloebgkkffaaa.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlaGJ1ZXBlbG9lYmdra2ZmYWFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM4MDgyMTAsImV4cCI6MjA5OTM4NDIxMH0.WtfoCbzmkIYxih4Ny7TZ0pHbLngB0Wej_NI7sb8AUk0';
-let authSession = null;
-let SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
-let SB_WRITE_HEADERS = { ...SB_HEADERS };
-function updateAuthHeaders() {
-  const token = authSession && authSession.access_token ? authSession.access_token : SUPABASE_KEY;
-  SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + token };
-  SB_WRITE_HEADERS = { ...SB_HEADERS };
-}
-function setAuthMessage(message, isError = false) {
-  const el = document.getElementById('auth-msg');
-  if (el) { el.textContent = message; el.style.color = isError ? 'var(--ng)' : 'var(--text2)'; }
-}
-function updateAuthUI() {
-  const loggedIn = !!(authSession && authSession.user && authSession.access_token);
-  ['auth-signin','auth-signup','auth-email','auth-password'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = loggedIn ? 'none' : ''; });
-  const out = document.getElementById('auth-signout');
-  if (out) out.style.display = loggedIn ? '' : 'none';
-  if (loggedIn) setAuthMessage('ログイン中: ' + (authSession.user.email || 'アカウント') + '（クラウド同期有効）');
-}
-function saveAuthSession(session) {
-  if (!session || !session.access_token || !session.user) {
-    authSession = null;
-    try { localStorage.removeItem('vocab_auth_session'); } catch(e) {}
-  } else {
-    authSession = { ...session, expires_at: session.expires_at || Math.floor(Date.now()/1000) + (session.expires_in || 3600) };
-    try { localStorage.setItem('vocab_auth_session', JSON.stringify(authSession)); } catch(e) {}
-  }
-  updateAuthHeaders();
-  updateAuthUI();
-}
-async function ensureFreshSession() {
-  if (!authSession || !authSession.refresh_token) return false;
-  if (authSession.expires_at && authSession.expires_at > Math.floor(Date.now()/1000) + 60) return true;
-  try {
-    const res = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', { method:'POST', headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY}, body:JSON.stringify({refresh_token:authSession.refresh_token}) });
-    if (!res.ok) throw new Error('セッションを更新できませんでした。もう一度ログインしてください。');
-    saveAuthSession(await res.json());
-    return true;
-  } catch(e) { saveAuthSession(null); setAuthMessage(e.message || 'ログインし直してください。', true); return false; }
-}
-async function signUp() {
-  const email=(document.getElementById('auth-email').value||'').trim(), password=document.getElementById('auth-password').value||'';
-  if (!email || password.length<8) { setAuthMessage('メールアドレスと8文字以上のパスワードを入力してください。',true); return; }
-  setAuthMessage('アカウントを作成中...');
-  try {
-    const res=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify({email,password})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.msg||data.message||data.error_description||'アカウントを作成できませんでした。');
-    if(data.access_token&&data.user){saveAuthSession(data);await loadFromStorage();}
-    else setAuthMessage('確認メールを送信しました。メール内のリンクで認証してからログインしてください。');
-  } catch(e){setAuthMessage(e.message||'アカウント作成に失敗しました。',true);}
-}
-async function signIn() {
-  const email=(document.getElementById('auth-email').value||'').trim(), password=document.getElementById('auth-password').value||'';
-  if(!email||!password){setAuthMessage('メールアドレスとパスワードを入力してください。',true);return;}
-  setAuthMessage('ログイン中...');
-  try{
-    const res=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},body:JSON.stringify({email,password})});
-    const data=await res.json();
-    if(!res.ok||!data.access_token||!data.user)throw new Error(data.msg||data.message||data.error_description||'ログインできませんでした。');
-    saveAuthSession(data);await loadFromStorage();
-  }catch(e){setAuthMessage(e.message||'ログインに失敗しました。',true);}
-}
-async function signOut() {
-  if(!confirm('ログアウトしますか？未同期の変更がある場合は、先に同期できることを確認してください。')) return;
-  if(authSession && words.length){
-    clearTimeout(syncTimer);syncTimer=null;
-    await syncNow();
-    if(document.getElementById('sync-status').classList.contains('error')){
-      alert('同期に失敗したためログアウトを中止しました。ネット接続を確認して再試行してください。');
-      return;
-    }
-  }
-  if(authSession){await ensureFreshSession();try{await fetch(SUPABASE_URL+'/auth/v1/logout',{method:'POST',headers:SB_HEADERS});}catch(e){}}
-  saveAuthSession(null);words=[];
-  try{localStorage.removeItem('vocab_v2');}catch(e){}
-  updateHeader();renderList();setSyncStatus('offline','ログアウト中');setAuthMessage('ログアウトしました。');
-}
-async function initAuth() {
-  try{const s=localStorage.getItem('vocab_auth_session');if(s)authSession=JSON.parse(s);}catch(e){authSession=null;}
-  updateAuthHeaders();
-  if(authSession&&!(await ensureFreshSession()))authSession=null;
-  updateAuthHeaders();updateAuthUI();
-}
-
+// ===== ローカル保存（ログイン・クラウド同期なし） =====
 let words = [], syncTimer = null, currentLang = 'en', listFilter = 'all', bulkAbort = false, bulkDetailAbort = false;
 let selectMode = false, selectedIds = new Set();
 // 単語帳一覧は件数が増えるほど一度に全部DOM描画すると重くなるので、ページング表示にする。
@@ -583,120 +487,51 @@ async function deleteSelected() {
   renderList(); updateSelectedCount();
 }
 
-// ===== 同期 =====
+// ===== 端末内保存 =====
 function setSyncStatus(s, m) {
   const el = document.getElementById('sync-status');
-  el.className = 'sync-status ' + s;
-  document.getElementById('sync-msg').textContent = m;
+  if (el) {
+    el.className = 'sync-status ' + s;
+    const msg = document.getElementById('sync-msg');
+    if (msg) msg.textContent = m;
+  }
 }
 function updateHeader() {
   document.getElementById('hd-count').textContent = words.length > 0 ? words.length + '語' : '';
 }
 async function loadFromStorage() {
-  if(!authSession||!authSession.user||!(await ensureFreshSession())){
-    try{const s=localStorage.getItem('vocab_v2');if(s)words=JSON.parse(s);}catch(e){}
-    updateHeader();setSyncStatus('offline','ログインするとクラウド同期');renderList();return;
-  }
-  setSyncStatus('syncing','同期中...');
-  try{
-    const localWords=(()=>{try{return JSON.parse(localStorage.getItem('vocab_v2')||'[]');}catch(e){return [];}})();
-    let allRows=[],offset=0,pageSize=1000;
-    while(true){
-      const url=SUPABASE_URL+'/rest/v1/words?select=*&user_id=eq.'+encodeURIComponent(authSession.user.id)+'&order=id.asc&limit='+pageSize+'&offset='+offset;
-      const res=await fetch(url,{headers:SB_HEADERS});
-      if(!res.ok)throw new Error('単語の読み込みに失敗しました (HTTP '+res.status+')');
-      const rows=await res.json();allRows=allRows.concat(rows);
-      if(rows.length<pageSize)break;offset+=pageSize;
-    }
-    const remoteWords=allRows.map(r=>JSON.parse(r.data)),merged=new Map();
-    for(const w of localWords)if(w&&w.word)merged.set((w.lang||'en')+'\u0000'+w.word,w);
-    for(const w of remoteWords)if(w&&w.word){const k=(w.lang||'en')+'\u0000'+w.word;if(!merged.has(k))merged.set(k,w);}
-    words=[...merged.values()];
-    try{localStorage.setItem('vocab_v2',JSON.stringify(words));}catch(e){}
-    updateHeader();setSyncStatus('synced','同期済み ✓');
-    if(words.length>remoteWords.length){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,250);}
-  }catch(e){
-    setSyncStatus('error','同期エラー: '+(e&&e.message?e.message:'接続を確認してください'));
-    try{const s=localStorage.getItem('vocab_v2');if(s)words=JSON.parse(s);}catch(e2){}
-    updateHeader();
-  }
+  try {
+    const saved = localStorage.getItem('vocab_v2');
+    words = saved ? JSON.parse(saved) : [];
+    if (!Array.isArray(words)) words = [];
+  } catch(e) { words = []; }
+  updateHeader();
+  setSyncStatus('synced', '端末内に保存');
   renderList();
 }
-// クラウド同期: 全削除→全再挿入だと、削除後にinsertが失敗すると全データが消えてしまうため、
-// upsert（重複時は更新）方式に変更。words テーブル側で (word,lang) にユニーク制約を張っておくこと。
-// 注意: このsaveToStorage()は「今ある単語をupsertするだけ」で、サーバー上の行を
-// 一切削除しない。以前は「ローカルに無い単語＝サーバーから削除」という差分ロジックを
-// ここに入れていたが、これだと他端末で追加された直後にこの端末がまだその単語を
-// 知らない状態で同期すると、その単語がサーバーから消されてしまう（複数端末使用時に
-// 単語が消えるバグの原因）。削除は deleteWord/deleteSelected/clearAllWords から
-// 明示的に deleteWordsFromServer() を呼ぶ形にし、同期処理からは完全に切り離した。
-// 実際にサーバーへupsertする処理本体。デバウンスされた通常経路と、
-// タブが隠れる直前の即時フラッシュ経路の両方から呼ばれる（重複呼び出しはisSyncingで防止）。
-let isSyncing = false;
 async function syncNow() {
-  if (isSyncing) return;
-  isSyncing = true;
-  setSyncStatus('syncing', '同期中...');
-  try {
-    if (words.length > 0) {
-      if(!authSession||!authSession.user||!(await ensureFreshSession())){setSyncStatus('offline','ログインするとクラウド同期');return;}
-      const rows = words.map(w => ({ user_id:authSession.user.id, word:w.word||'', lang:w.lang||'en', meaning:w.meaning_ja||w.meaning||'', data:JSON.stringify(w) }));
-      for (let i = 0; i < rows.length; i += 200) {
-        const chunk = rows.slice(i, i + 200);
-        const res = await fetch(SUPABASE_URL + '/rest/v1/words?on_conflict=user_id,word,lang', {
-          method: 'POST',
-          headers: { ...SB_WRITE_HEADERS, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-          body: JSON.stringify(chunk)
-        });
-        if (!res.ok) throw new Error('upsert failed');
-      }
-    }
-    setSyncStatus('synced', '同期済み ✓');
-  } catch (e) { setSyncStatus('error', '同期エラー: ' + (e && e.message ? e.message : '接続を確認してください')); }
-  finally { isSyncing = false; }
+  // クラウド同期は使用しません。単語は saveToStorage() で端末内に保存されます。
+  return;
 }
 async function saveToStorage() {
-  try { localStorage.setItem('vocab_v2', JSON.stringify(words)); } catch(e) {}
+  try {
+    localStorage.setItem('vocab_v2', JSON.stringify(words));
+    setSyncStatus('synced', '端末内に保存');
+  } catch(e) {
+    setSyncStatus('error', '保存できません。端末の空き容量を確認してください');
+  }
   updateHeader();
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncNow, 2000);
+  syncTimer = null;
 }
-// タブがバックグラウンドに回る（スマホでアプリを切り替える／ロックする等を含む）直前に、
-// デバウンス待ちの同期があれば即座に本実行する。これが無いと、編集後2秒以内にアプリを
-// 閉じた／切り替えた場合に変更がサーバーに届かないまま消えてしまう。
-// visibilitychangeの時点ではページはまだ生きているので、通常のfetch（ヘッダーもPreferも
-// そのまま使える）で問題なく完了する。sendBeacon/keepalive fetchは本文サイズ制限が厳しく
-// （合計64KB程度）、単語数が多いとここでの全件同期には不向きなので使わない。
 function flushPendingSync() {
-  if (syncTimer) {
-    clearTimeout(syncTimer);
-    syncTimer = null;
-    syncNow();
-  }
+  if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSync(); });
+document.addEventListener('visibilitychange', flushPendingSync);
 window.addEventListener('pagehide', flushPendingSync);
-
-// 明示的に削除された単語だけをピンポイントでサーバーから消す（1件ずつのDELETEなので確実で事故りにくい）
-async function deleteOneFromServer(it, retriesLeft) {
-  if(!authSession||!authSession.user||!(await ensureFreshSession())){setSyncStatus('offline','ログインすると削除を同期できます');return;}
-  const q='user_id=eq.'+encodeURIComponent(authSession.user.id)+'&word=eq.'+encodeURIComponent(it.word||'')+'&lang=eq.'+encodeURIComponent(it.lang||'en');
-  try {
-    const res = await fetch(SUPABASE_URL + '/rest/v1/words?' + q, { method: 'DELETE', headers: SB_WRITE_HEADERS });
-    if (!res.ok) throw new Error('delete failed: ' + res.status);
-  } catch (e) {
-    if (retriesLeft > 0) {
-      await new Promise(r => setTimeout(r, 1000));
-      return deleteOneFromServer(it, retriesLeft - 1);
-    }
-    // 3回試して失敗 → サーバー上に残ったままになるので、次回起動時に復活する可能性がある。
-    // 今のUIではエラーの見せ場が無いので、せめて同期ステータスでユーザーに知らせる。
-    setSyncStatus('error', '削除の同期に失敗しました');
-  }
-}
-async function deleteWordsFromServer(items) {
-  if (!items || items.length === 0) return;
-  await Promise.all(items.map(it => deleteOneFromServer(it, 2)));
+function deleteWordsFromServer(items) {
+  // クラウドを使わないため、サーバー側の削除処理は不要です。
+  return Promise.resolve();
 }
 // ===== 学習履歴 =====
 // 実際に問題に答えた時だけ呼ぶ（ページを開いただけではストリークを増やさない）
@@ -1690,24 +1525,17 @@ function importJSON(e){
 async function clearAllWords(){
   if(!confirm('本当に全ての単語を削除しますか？この操作は元に戻せません。')) return;
   if(!confirm('本当によろしいですか？')) return;
-  words=[];
-  try { localStorage.setItem('vocab_v2', JSON.stringify(words)); } catch(e) {}
-  // saveToStorage()はもう「upsertのみ」なので全消しはしない。ここでは明示的な全削除操作なので直接サーバーに全削除を投げる。
-  setSyncStatus('syncing', '同期中...');
-  try {
-    if(!authSession||!authSession.user||!(await ensureFreshSession()))throw new Error('ログインが必要です');
-    const res=await fetch(SUPABASE_URL+'/rest/v1/words?user_id=eq.'+encodeURIComponent(authSession.user.id),{method:'DELETE',headers:SB_WRITE_HEADERS});
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    setSyncStatus('synced', '同期済み ✓');
-  } catch (e) { setSyncStatus('error', '同期エラー'); }
-  renderList(); updateHeader();
-  alert('全単語を削除しました。');
+  words = [];
+  await saveToStorage();
+  renderList();
+  updateHeader();
+  alert('この端末に保存された全単語を削除しました。');
 }
 
 // ===== 起動 =====
-initAuth().then(()=>loadFromStorage()).catch(()=>loadFromStorage());
+loadFromStorage();
 // PWA: アプリ本体（このHTML）をキャッシュしてオフラインでも開けるようにする。
-// 単語データそのもの（Supabase等）はSWでは扱わず、既存のlocalStorageフォールバックに任せる。
+// 単語データはブラウザのlocalStorageに保存します。
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(()=>{}); });
 }
